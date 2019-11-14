@@ -6,7 +6,7 @@ import re
 
 
 # Maps indices to date names
-def get_menu(menu, date):
+def get_menu(menu, date, canteen):
     """Returns the whole menu as a string.
 
     :param menu: The plan that contains the menu
@@ -16,16 +16,16 @@ def get_menu(menu, date):
     """
 
     formatted_date = get_humanized_date(date)
-    date_line = '<b>{date}</b>'.format(date=formatted_date)
+    date_line = f'<b>{formatted_date} in der {canteen.name}</b>'
 
     meals = [
         _get_menu_item(menu, meal) for meal in _MENU_ITEM_ORDER if meal in menu
     ]
-    hauptbeilagen = menu['Hauptbeilagen']['name'].split(' oder ')
-    nebenbeilagen = menu['Nebenbeilage']['name'].split(' oder ')
+    hauptbeilagen = ' '.join(menu['Hauptbeilagen']['name'])
+    nebenbeilagen = ' '.join(menu['Nebenbeilage']['name'])
     side_dishes = '<i>Beilagen</i>\n' \
-                  '{} oder {}\n' \
-                  '{} oder {}'.format(*hauptbeilagen, *nebenbeilagen)
+                  '{}\n' \
+                  '{}'.format(hauptbeilagen, nebenbeilagen)
 
     menu_parts = [date_line, *meals, side_dishes]
     return '\n\n'.join(menu_parts)
@@ -40,6 +40,7 @@ _MENU_ITEM_ORDER = [
     'Empfehlung des Tages',
     'Pasta',
     'Burger der Woche',
+    'Burger'
 ]
 
 
@@ -93,6 +94,7 @@ _MENU_ITEM_EMOJIS = {
     'Empfehlung des Tages': '🥘',
     'Pasta': '🍝',
     'Burger der Woche': '🍔',
+    'Burger': '🍔',
 }
 
 
@@ -106,8 +108,6 @@ def _get_menu_item(menu, name):
     """
     meal = menu[name]
 
-    description = _get_description(meal, name)
-
     price_suffix = ' — {:.2f}€'.format(meal['price']) if meal['price'] else ''
     header = '<i>{name}</i>{price_suffix}'.format(name=name,
                                                   price_suffix=price_suffix)
@@ -118,11 +118,9 @@ def _get_menu_item(menu, name):
 
 
 
-def _get_description(meal, name):
-    submeal_names = meal['name'].split('\n')
-
+def _get_description(meal, category):
     all_descriptions = []
-    for meal_name in submeal_names:
+    for meal_idx, meal_name in enumerate(meal['name']):
         description_parts = re.split(r' \| | mit ', meal_name)
 
         supplements_description = ''
@@ -132,11 +130,19 @@ def _get_description(meal, name):
             supplements_description = ' mit {middle} & {last}'.format(
                 middle=', '.join(description_parts[1:-1]), last=description_parts[-1]
             )
+
+        vegan_vegetarian_desc = ''
+        if 'OLV' in meal['notes'][meal_idx]:
+            vegan_vegetarian_desc = ' <i>(vegetarisch)</i>'
+        if 'vegan' in meal['notes'][meal_idx]:
+            vegan_vegetarian_desc = ' <i>(vegan)</i>'
+
         all_descriptions.append(
-            '{emoji} <b>{name}</b>'
+            '{emoji} <b>{name}</b>{vegan_vegetarian}'
             '{supplements}'.format(name=description_parts[0],
+                                   vegan_vegetarian=vegan_vegetarian_desc,
                                    supplements=supplements_description,
-                                   emoji=_MENU_ITEM_EMOJIS.get(name, ''))
+                                   emoji=_MENU_ITEM_EMOJIS.get(category, ''))
         )
 
     return '\n'.join(all_descriptions)
@@ -186,3 +192,17 @@ def get_error_no_menu():
 
 def get_error_closed():
     return _CLOSED_ERROR_TEXT
+
+def get_error_unknown_args(args):
+    if len(args) > 1:
+        return 'Ich habe die Befehle "{}" nicht verstanden'.format(
+            ", ".join(args)
+        )
+    else:
+        return f'Ich habe den Befehl "{args[0]}" nicht verstanden'
+
+def get_error_multiple_dates():
+    return 'Ich kann nur das Menü für einen Tag auf einmal senden'
+
+def get_error_multiple_canteens():
+    return 'Ich kann nur das Menü für eine Mensa auf einmal senden'

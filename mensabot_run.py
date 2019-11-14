@@ -35,11 +35,11 @@ def start_polling(updater):
     updater.idle()
 
 
-def start_webhook(updater, port, local_urlpath, webhook_path=None):
-    updater.start_webhook(listen="127.0.0.1",
+def start_webhook(updater, port, local_urlpath, bind, webhook_path=None):
+    updater.start_webhook(listen=bind,
                           port=port,
                           url_path=local_urlpath)
-    logger.info('Started webhook server on port 127.0.0.1:{}'.format(port))
+    logger.info('Started webhook server on port {}:{}'.format(bind, port))
     if webhook_path:
         logger.info('Setting webhook path')
         updater.bot.set_webhook(webhook_path)
@@ -50,7 +50,8 @@ def start_webhook(updater, port, local_urlpath, webhook_path=None):
 @click.option('--webhook', is_flag=True, default=False)
 @click.option('--port', default=0)
 @click.option('--debug', is_flag=True)
-def main(webhook, port, debug):
+@click.option('--bind', default='127.0.0.1')
+def main(webhook, port, debug, bind):
     if dotenv_imported:
         load_dotenv(find_dotenv())
 
@@ -76,7 +77,7 @@ def main(webhook, port, debug):
         logger.info('Using webhook mode')
         if port == 0:
             port = 8080
-        start_webhook(updater, port, token)
+        start_webhook(updater, port, token, bind)
     else:
         logger.info('Using polling mode')
         start_polling(updater)

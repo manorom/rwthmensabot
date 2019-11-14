@@ -2,7 +2,6 @@ import datetime
 from threading import RLock
 import logging
 import re
-from typing import Dict, Any
 
 import requests
 
@@ -17,8 +16,7 @@ _CLOSED = object()
 _OPENMENSA_MEAL_URL = 'http://openmensa.org/api/v2/canteens/{}/days/{}/meals'
 _CACHE_SIZE = 7
 _CACHE_KEEP_DAYS = datetime.timedelta(days=7)
-_REQUESTS_HEADERS = {'User-Agent': '@rwthmensabot Telegram Bot. Please '
-                                   '@rcurve on telegram in case of problems'}
+_REQUESTS_HEADERS = {'User-Agent': '@rwthmensabot Telegram Bot. Please contact @rcurve on telegram in case of problems'}
 
 
 # ---------------------------------
@@ -26,31 +24,28 @@ _REQUESTS_HEADERS = {'User-Agent': '@rwthmensabot Telegram Bot. Please '
 # ---------------------------------
 
 class OpenMensaCacheEntry(object):
-    def __init__(self, cache_value : Dict[str, Any],
-                 good_through: datetime.datetime):
-        self.cache_value: Dict[str, Any] = cache_value
-        self.good_through: datetime.datetime = good_through
-        self.last_used: datetime.datetime = datetime.datetime.now()
+    def __init__(self, cache_value, good_through):
+        self.cache_value = cache_value
+        self.good_through = good_through
+        self.last_used = datetime.datetime.now()
 
 # We use a Mutex when altering the cache. This incurs some overhead but we
 # switched our exec model before to a multi-threaded one and we might want
 # to use multi threaded features from ptb at some point.
 class OpenMensaCache(object):
-    def __init__(self, cache_size: int):
-        self._cache_data: Dict[datetime.date, OpenMensaCacheEntry] = {}
-        self._cache_size: int = cache_size
+    def __init__(self, cache_size):
+        self._cache_data = {}
+        self._cache_size = cache_size
         self._mutex = RLock()
     def _remove_expired(self):
         now = datetime.datetime.now()
         to_be_removed = [k for k,v in self._cache_data.items() if v.good_through < now]
         for k in to_be_removed:
-            self._cache_data.pop(k)
+            del self._cache_data[k]
     def _remove_least_recently_used(self):
-        lru_key = min(self._cache_data.keys(),
-                      key=lambda k: self._cache_data[k].last_used)
-        self._cache_data.pop(lru_key)
-    def encache(self, date: datetime.date, cache_value: Dict[str, Any],
-                good_through: datetime.datetime):
+        lru_key, _ = min(self._cache_data, key=lambda k: k[1].last_used)
+        del self._cache_data[lru_key]
+    def encache(self, date, cache_value, good_through):
         with self._mutex:
             if len(self._cache_data) >= self._cache_size:
                 self._remove_expired()
@@ -59,7 +54,7 @@ class OpenMensaCache(object):
             while len(self._cache_data) >= self._cache_size:
                 self._remove_least_recently_used()
             self._cache_data[date] = OpenMensaCacheEntry(cache_value, good_through)
-    def get(self, date: datetime.date) -> Dict[str, Any]:
+    def get(self, date):
         with self._mutex:
             if not date in self._cache_data:
                 raise KeyError()
@@ -90,13 +85,12 @@ class CanteenClosedError(NoMenuAvailableError):
 # ---------------------------------
 
 
-def _validate_date(date: datetime.date):
+def _validate_date(date):
     """Validates the date to be in range and a weekday.
 
     :param date: This date's validity will be checked.
-    :raises CanteenClosed: if there is no plan on the requested date because
-                           the canteen is closed.
-    :raises NoMenuAvailableError: if the date is out of range
+    :raises CanteenClosed: if there is no plan on the requested date because the canteen is closed.
+    :raises NoMenuAvailable: if the date is out of range
 
     """
 
@@ -110,18 +104,16 @@ def _validate_date(date: datetime.date):
         raise NoMenuAvailableError()
 
 
-def _make_dict_from_response(response: Dict):
+def _make_dict_from_response(response):
     """Formats the JSON response as a dictionary.
-    If the canteen is closed, the string 'closed' is returned instead of a
-    dictionary.
+    If the canteen is closed, the string 'closed' is returned instead of a dictionary.
 
     :param response: OpenMensa's response in JSON format
-    :return: The response formatted as a dictionary, or the string 'closed',
-             if the canteen is closed.
+    :return: The response formatted as a dictionary, or the string 'closed', if the canteen is closed.
     :rtype: dict|string
     """
 
-    dictionary: Dict[str, Any] = {}
+    dictionary = {}
     if all(map(lambda meal: 'geschlossen' in meal['name'], response)):
         return _CLOSED
 
@@ -144,12 +136,10 @@ def _make_dict_from_response(response: Dict):
 
         # If entry for category already exists, append new description
         if category in dictionary:
-            dictionary[category]['name'] = dictionary[category]['name'] + \
-                                           '\n' + description
+            dictionary[category]['name'].append(description)
+            dictionary[category]['notes'].append(meal.get('notes', []))
         else:  # Make new entry
-            dictionary[category] = {'name': description,
-                                    'price': meal.get('prices', {})
-                                                 .get('students')}
+            dictionary[category] = {'name': [description], 'price': meal.get('prices', {}).get('students'), 'notes': [meal.get('notes', [])]}
 
     return dictionary
 
@@ -160,13 +150,14 @@ def _make_dict_from_response(response: Dict):
 
 
 class OpenMensaCanteen(object):
-    def __init__(self, openmensa_id=187):
+    def __init__(self, openmensa_id, mensa_name):
         self.id = openmensa_id
-        self._cache: OpenMensaCache = OpenMensaCache(_CACHE_SIZE)
+        self.name = mensa_name
+        self._cache = OpenMensaCache(_CACHE_SIZE)
 
     # locale.setlocale(locale.LC_TIME, 'de_DE')
 
-    def get_menu_by_date(self, date: datetime.date) -> Dict:
+    def get_menu_by_date(self, date):
         """Returns the menu for the given date.
 
         :param date: The menu's date.
@@ -188,23 +179,23 @@ class OpenMensaCanteen(object):
                 self._cache.encache(date, menu, encache_until)
 
         if menu is None:
-            raise NoMenuAvailableError()
+            raise NoMenuAvailable()
         if menu is _CLOSED:
             raise CanteenClosedError()
 
         return menu
 
-    def _retrieve_menu(self, date: datetime.date) -> Any[Dict, None]:
+    def _retrieve_menu(self, date):
         raw_response = requests.get(_OPENMENSA_MEAL_URL.format(self.id,
                                         date.isoformat()),
-                                        headers=_REQUESTS_HEADERS)
+                                    headers=_REQUESTS_HEADERS)
         if raw_response.text == ' ':
             return None
 
         json_response = raw_response.json()
         return _make_dict_from_response(json_response)
 
-    def _encache_until_datetime(self, date: datetime.date, menu) -> Any[datetime.datetime, None]:
+    def _encache_until_datetime(self, date, menu):
         # Decides for how long a response should be cached by OpenMnesaCache
         # Returns None if it should not be cached
         if menu is None: # We dont have a menu yet, cache not so long

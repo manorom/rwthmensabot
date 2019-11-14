@@ -80,50 +80,97 @@ def _parse_date(date_input):
 
 class Mensabot(object):
     def __init__(self):
-        self.mensaAcademica = OpenMensaCanteen(187)
+        self.mensa_academica = OpenMensaCanteen(187, 'Mensa Academica')
+        self.mensa_ahorn = OpenMensaCanteen(95, 'Mensa Ahorn')
+        self.mensa_vita = OpenMensaCanteen(96, 'Mensa Vita')
+        self.mensa_arg_map = {
+            'academica': self.mensa_academica,
+            'aca': self.mensa_academica,
+            'vita': self.mensa_vita,
+            'viter': self.mensa_vita,
+            'ahorn': self.mensa_ahorn
+        }
 
     def configure_dispatcher(self, dispatcher):
-        dispatcher.add_handler(CommandHandler('mensa', self.mensa,
+        dispatcher.add_handler(CommandHandler('mensa', self.mensa_command,
+                                              pass_args=True))
+        dispatcher.add_handler(CommandHandler('mensavita',
+                                             self.mensavita_command,
+                                             pass_args=True))
+        dispatcher.add_handler(CommandHandler('mensaahorn',
+                                              self.mensaahorn_command,
                                               pass_args=True))
         dispatcher.add_handler(CommandHandler('help', self.help))
         logger.info('Configured dispatcher')
         # I dont know how to correctly implement hte control command yet
 
-    def mensa(self, bot, update, args):
-        """ Sends the menu.
-        If the date is invalid, an error message will be sent.
-        If the command is not supported, nothing will be done.
+    def search_parse_canteens(self, args):
+        canteen_args = [ self.mensa_arg_map.get(s.lower()) for s in args ]
 
-        :param input_message: The raw input user message.
-        """
+        canteens = []
+        for idx, c in reversed(list(enumerate(canteen_args))):
+            if c is not None:
+                args.pop(idx)
+                canteens.append(c)
 
-        # Parse Args
-        if len(args) == 0:  # we have just /mensa without a date
-            date = datetime.date.today()
-        elif len(args) == 1:  # /mensa with date
+        if len(canteens) > 0:
+            return canteens
+        else:
+            return [self.mensa_academica]
+
+    def search_parse_dates(self, args):
+        date_args = []
+        for idx, arg in reversed(list(enumerate(args))):
             try:
-                date = _parse_date(args[0])
+                date = _parse_date(arg)
+                args.pop(idx)
+                date_args.append(date)
             except ValueError:
-                # return message_texts.get_error_dateformat() here
-                return
-        else:  # unsupported number of arguments
-            # todo: issue some kind of error
+                pass
+        if len(date_args) > 0:
+            return date_args
+        else:
+            return [datetime.date.today()]
+
+
+    def mensa_command(self, bot, update, args):
+        canteen = self.search_parse_canteens(args)
+        self.send_menu(bot, update, args, canteen)
+
+    def mensaahorn_command(self, bot, update, args):
+        self.send_menu(bot, update, args, [self.mensa_ahorn])
+
+    def mensavita_command(self, bot, update, args):
+        self.send_menu(bot, update, args, [self.mensa_vita])
+
+    def send_menu(self, bot, update, args, canteens):
+        dates = self.search_parse_dates(args)
+
+        if len(args) > 0:
+            update.message.reply_text(
+                message_texts.get_error_unknown_args(args))
+
+        if len(dates) > 1:
+            update.message.reply_text(message_texts.get_error_multiple_dates())
             return
 
-        # Retrieve menu
+        if len(canteens) > 1:
+            update.message.reply_text(
+                message_texts.get_error_multiple_canteens())
+            return
+
+        date = dates[0]
+        canteen = canteens[0]
+
         try:
-            menu = self.mensaAcademica.get_menu_by_date(date)
+            menu = canteen.get_menu_by_date(date)
         except CanteenClosedError:
             update.message.reply_text(message_texts.get_error_closed())
         except NoMenuAvailableError:
             update.message.reply_text(message_texts.get_error_no_menu())
-            pass
         else:  # no exception
-            update.message.reply_html(message_texts.get_menu(menu, date))
+            update.message.reply_html(message_texts.get_menu(menu, date, canteen))
+
 
     def help(self, bot, update):
         update.message.reply_text(message_texts.get_help())
-
-    def control(self, bot, update):
-        # todo: figure out how to implement this
-        pass
